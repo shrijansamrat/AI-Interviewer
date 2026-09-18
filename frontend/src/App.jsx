@@ -1,4 +1,28 @@
+import { useEffect, useState } from 'react'
+
 function App() {
+  const [backendStatus, setBackendStatus] = useState('loading')
+
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/api/health')
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error('Backend health check failed')
+        }
+
+        setBackendStatus('connected')
+      })
+      .catch(() => {
+        setBackendStatus('unavailable')
+      })
+  }, [])
+
+  const connectionMessage = {
+    loading: 'Connecting to backend...',
+    connected: 'Backend connected ✓',
+    unavailable: 'Backend unavailable',
+  }[backendStatus]
+
   return (
     <main className="min-h-screen overflow-hidden bg-[#f5f7f2] text-[#18332f]">
       <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-6 py-6 sm:px-10 lg:px-16">
@@ -6,7 +30,12 @@ function App() {
         <div className="pointer-events-none absolute -bottom-40 -left-32 h-96 w-96 rounded-full bg-[#f4d7a1] blur-3xl" />
         <header className="relative flex items-center justify-between">
           <a className="text-lg font-bold tracking-tight" href="/">AI<span className="text-[#e06b45]">-</span>Interviewer</a>
-          <span className="rounded-full border border-[#bed0c3] bg-white/60 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#52716a]">Practice with purpose</span>
+          <div className="flex items-center gap-3">
+            <span className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] ${backendStatus === 'connected' ? 'bg-[#d7e8c7] text-[#315c3d]' : backendStatus === 'unavailable' ? 'bg-[#f7d5c8] text-[#a1452c]' : 'border border-[#bed0c3] bg-white/60 text-[#52716a]'}`}>
+              {connectionMessage}
+            </span>
+            <span className="hidden rounded-full border border-[#bed0c3] bg-white/60 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#52716a] sm:inline-block">Practice with purpose</span>
+          </div>
         </header>
         <section className="relative flex flex-1 items-center py-20 lg:py-24">
           <div className="grid w-full items-center gap-16 lg:grid-cols-[1.05fr_0.95fr] lg:gap-20">
