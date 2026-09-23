@@ -1,7 +1,11 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from routes.interviews import router as interviews_router
+
 app = FastAPI(title="AI-Interviewer Backend")
+
+app.include_router(interviews_router)
 
 # Allow the Vite development server to call this backend.
 app.add_middleware(
