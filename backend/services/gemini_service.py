@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from typing import Literal
 
 from dotenv import load_dotenv
@@ -66,17 +67,29 @@ The questions array must contain exactly {question_count} items. Number them fro
 1 through {question_count} in order. Do not include any extra fields or commentary.
 """.strip()
 
-    try:
-        response = client.models.generate_content(
-            model="gemini-3.6-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                response_mime_type="application/json",
-                response_schema=GeneratedQuestions,
-            ),
-        )
-    except Exception as error:
-        raise RuntimeError(f"Gemini question generation failed: {error}") from error
+    
+    last_error = None
+
+    for attempt in range(3):
+        try:
+            response = client.models.generate_content(
+                model="gemini-flash-lite-latest",
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    response_schema=GeneratedQuestions,
+                ),
+            )
+            break
+        except Exception as error:
+            last_error = error
+
+            if attempt < 2:
+                time.sleep(2 ** attempt)
+            else:
+                raise RuntimeError(
+                    f"Gemini question generation failed: {last_error}"
+                ) from last_error
 
     response_text = response.text
     if not response_text:
