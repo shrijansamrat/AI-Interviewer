@@ -20,3 +20,6 @@ class InterviewResponse(BaseModel):
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+class AnswerCreate(BaseModel):
+    answer_text: str    

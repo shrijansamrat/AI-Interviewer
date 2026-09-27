@@ -3,9 +3,13 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Interview, Question
-from schemas import InterviewCreate, InterviewResponse
-from services.gemini_service import GeneratedQuestions, generate_interview_questions
+from models import Answer, Interview, Question
+from schemas import AnswerCreate, InterviewCreate, InterviewResponse
+from services.gemini_service import (
+    GeneratedQuestions,
+    evaluate_answer,
+    generate_interview_questions,
+)
 
 
 router = APIRouter(prefix="/api/interviews", tags=["interviews"])
@@ -110,3 +114,215 @@ def generate_questions(
         ) from error
 
     return GeneratedQuestions.model_validate(generated_questions)
+
+@router.get("/{interview_id}/questions")
+def get_interview_questions(
+    interview_id: int,
+    db: Session = Depends(get_db),
+):
+    interview = db.get(Interview, interview_id)
+
+    if interview is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interview not found",
+        )
+
+    questions = db.scalars(
+        select(Question)
+        .where(Question.interview_id == interview_id)
+        .order_by(Question.order_number)
+    ).all()
+
+    if not questions:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No questions found for this interview",
+        )
+
+    return [
+        {
+            "id": question.id,
+            "question_text": question.question_text,
+            "question_type": question.question_type,
+            "difficulty": question.difficulty,
+            "order_number": question.order_number,
+        }
+        for question in questions
+    ]
+
+@router.post("/questions/{question_id}/answer")
+def submit_answer(
+    question_id: int,
+    answer_data: AnswerCreate,
+    db: Session = Depends(get_db),
+):
+    question = db.get(Question, question_id)
+
+    if question is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Question not found",
+        )
+
+    if not answer_data.answer_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Answer cannot be empty",
+        )
+
+    answer = Answer(
+        question_id=question_id,
+        answer_text=answer_data.answer_text.strip(),
+    )
+
+    db.add(answer)
+    db.flush()
+
+    interview = db.get(Interview, question.interview_id)
+
+    try:
+        evaluation_data = evaluate_answer(
+            question=question.question_text,
+            answer=answer.answer_text,
+            role=interview.role,
+        )
+    except Exception as error:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Answer evaluation failed",
+        ) from error
+
+    from models import Evaluation
+
+    evaluation = Evaluation(
+        answer_id=answer.id,
+        correctness=evaluation_data["correctness"],
+        relevance=evaluation_data["relevance"],
+        clarity=evaluation_data["clarity"],
+        depth=evaluation_data["depth"],
+        overall_score=evaluation_data["overall_score"],
+        feedback=evaluation_data["feedback"],
+    )
+
+    db.add(evaluation)
+    db.commit()
+    db.refresh(answer)
+    db.refresh(evaluation)
+
+    return {
+        "answer": {
+            "id": answer.id,
+            "question_id": answer.question_id,
+            "answer_text": answer.answer_text,
+            "submitted_at": answer.submitted_at,
+        },
+        "evaluation": evaluation_data,
+    }
+@router.get("/{interview_id}/results")
+def get_interview_results(
+    interview_id: int,
+    db: Session = Depends(get_db),
+):
+    interview = db.get(Interview, interview_id)
+
+    if interview is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Interview not found",
+        )
+
+    questions = db.scalars(
+        select(Question)
+        .where(Question.interview_id == interview_id)
+        .order_by(Question.order_number)
+    ).all()
+
+    results = []
+
+    for question in questions:
+        answer = db.scalar(
+            select(Answer)
+            .where(Answer.question_id == question.id)
+            .order_by(Answer.id.desc())
+            .limit(1)
+        )
+
+        evaluation = None
+
+        if answer:
+            from models import Evaluation
+
+            evaluation = db.scalar(
+                select(Evaluation)
+                .where(Evaluation.answer_id == answer.id)
+            )
+
+        results.append(
+            {
+                "question_id": question.id,
+                "question": question.question_text,
+                "question_type": question.question_type,
+                "difficulty": question.difficulty,
+                "answer": answer.answer_text if answer else None,
+                "evaluation": (
+                    {
+                        "correctness": evaluation.correctness,
+                        "relevance": evaluation.relevance,
+                        "clarity": evaluation.clarity,
+                        "depth": evaluation.depth,
+                        "overall_score": evaluation.overall_score,
+                        "feedback": evaluation.feedback,
+                    }
+                    if evaluation
+                    else None
+                ),
+            }
+        )
+
+    evaluated_scores = [
+        item["evaluation"]["overall_score"]
+        for item in results
+        if item["evaluation"] is not None
+    ]
+
+    overall_score = (
+        round(sum(evaluated_scores) / len(evaluated_scores), 2)
+        if evaluated_scores
+        else None
+    )
+
+    strengths = []
+    gaps = []
+
+    for item in results:
+        evaluation = item["evaluation"]
+
+        if not evaluation:
+            continue
+
+        if evaluation["overall_score"] >= 8:
+            strengths.append(item["question"])
+
+        if evaluation["overall_score"] < 6:
+            gaps.append(item["question"])
+
+    interview.overall_score = overall_score
+
+    if all(item["evaluation"] is not None for item in results) and results:
+        interview.status = "completed"
+
+    db.commit()
+
+    return {
+        "interview_id": interview.id,
+        "role": interview.role,
+        "experience": interview.experience,
+        "interview_type": interview.interview_type,
+        "status": interview.status,
+        "overall_score": overall_score,
+        "strengths": strengths,
+        "gaps": gaps,
+        "questions": results,
+    }

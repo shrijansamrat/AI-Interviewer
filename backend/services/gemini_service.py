@@ -113,3 +113,75 @@ The questions array must contain exactly {question_count} items. Number them fro
         raise RuntimeError("Gemini returned questions with invalid order numbers")
 
     return validated_questions.model_dump()
+class EvaluationResult(BaseModel):
+    correctness: float = Field(ge=0, le=10)
+    relevance: float = Field(ge=0, le=10)
+    clarity: float = Field(ge=0, le=10)
+    depth: float = Field(ge=0, le=10)
+    overall_score: float = Field(ge=0, le=10)
+    feedback: str = Field(min_length=1)
+
+
+def evaluate_answer(
+    question: str,
+    answer: str,
+    role: str,
+) -> dict:
+    prompt = f"""
+Evaluate a candidate's interview answer.
+
+Candidate role: {role}
+
+Interview question:
+{question}
+
+Candidate answer:
+{answer}
+
+Evaluate the answer on a scale of 0 to 10 for:
+- correctness
+- relevance
+- clarity
+- depth
+
+Then provide an overall score from 0 to 10 and concise, actionable feedback.
+
+Return only valid JSON using exactly this structure:
+{{
+  "correctness": 0,
+  "relevance": 0,
+  "clarity": 0,
+  "depth": 0,
+  "overall_score": 0,
+  "feedback": "..."
+}}
+""".strip()
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-flash-lite-latest",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=EvaluationResult,
+            ),
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"Gemini answer evaluation failed: {error}"
+        ) from error
+
+    response_text = response.text
+
+    if not response_text:
+        raise RuntimeError("Gemini returned an empty evaluation")
+
+    try:
+        response_data = json.loads(response_text)
+        evaluation = EvaluationResult.model_validate(response_data)
+    except (json.JSONDecodeError, ValidationError, TypeError) as error:
+        raise RuntimeError(
+            "Gemini returned invalid evaluation data"
+        ) from error
+
+    return evaluation.model_dump()
