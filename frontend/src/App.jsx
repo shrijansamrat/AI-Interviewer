@@ -1,65 +1,889 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
+
+const API_BASE = 'http://127.0.0.1:8000'
 
 function App() {
-  const [backendStatus, setBackendStatus] = useState('loading')
+  const [screen, setScreen] = useState('home')
 
-  useEffect(() => {
-    fetch('http://127.0.0.1:8000/api/health')
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error('Backend health check failed')
-        }
+  const [role, setRole] = useState('Data Scientist')
+  const [experience, setExperience] = useState('Fresher')
+  const [interviewType, setInterviewType] = useState('Technical')
 
-        setBackendStatus('connected')
+  const [interviewId, setInterviewId] = useState(null)
+  const [questions, setQuestions] = useState([])
+  const [currentIndex, setCurrentIndex] = useState(0)
+  const [answer, setAnswer] = useState('')
+  const [evaluation, setEvaluation] = useState(null)
+  const [report, setReport] = useState(null)
+
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState('')
+  const [documentContext, setDocumentContext] = useState(null)
+  const [documentName, setDocumentName] = useState('')
+
+  const currentQuestion = questions[currentIndex]
+
+  async function startInterview() {
+    setLoading(true)
+    setError('')
+
+    try {
+      const createResponse = await fetch(`${API_BASE}/api/interviews`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          role,
+          experience,
+          interview_type: interviewType,
+        }),
       })
-      .catch(() => {
-        setBackendStatus('unavailable')
-      })
-  }, [])
 
-  const connectionMessage = {
-    loading: 'Connecting to backend...',
-    connected: 'Backend connected ✓',
-    unavailable: 'Backend unavailable',
-  }[backendStatus]
+      if (!createResponse.ok) {
+        throw new Error('Could not create interview')
+      }
+
+      const interview = await createResponse.json()
+
+      setInterviewId(interview.id)
+
+      
+      const generateResponse = await fetch(
+        `${API_BASE}/api/interviews/${interview.id}/generate-questions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            document_context: documentContext,
+          }),
+        },
+      )
+
+
+      if (!generateResponse.ok) {
+        const data = await generateResponse.json()
+        throw new Error(data.detail || 'Could not generate questions')
+      }
+
+      const questionsResponse = await fetch(
+        `${API_BASE}/api/interviews/${interview.id}/questions`,
+      )
+
+      if (!questionsResponse.ok) {
+        throw new Error('Could not load interview questions')
+      }
+
+      const generatedQuestions = await questionsResponse.json()
+
+      setQuestions(generatedQuestions)
+      setCurrentIndex(0)
+      setAnswer('')
+      setEvaluation(null)
+      setScreen('interview')
+    } catch (err) {
+      setError(err.message || 'Something went wrong')
+    } finally {
+      setLoading(false)
+    }
+  }
+  async function uploadDocument(file) {
+  if (!file) {
+    return
+  }
+
+  setLoading(true)
+  setError('')
+
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const response = await fetch(
+      `${API_BASE}/api/interviews/documents/parse`,
+      {
+        method: 'POST',
+        body: formData,
+      },
+    )
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.detail || 'Could not parse the document')
+    }
+
+    setDocumentName(data.filename)
+    setDocumentContext(data.parsed_context)
+    setScreen('document-review')
+  } catch (err) {
+    setError(err.message || 'Document parsing failed')
+  } finally {
+    setLoading(false)
+  }
+}
+
+  async function submitAnswer() {
+    if (!answer.trim()) {
+      setError('Please enter an answer before submitting.')
+      return
+    }
+
+    setLoading(true)
+    setError('')
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/interviews/questions/${currentQuestion.id}/answer`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            answer_text: answer,
+          }),
+        },
+      )
+
+      if (!response.ok) {
+        const data = await response.json()
+        throw new Error(data.detail || 'Could not submit answer')
+      }
+
+      const data = await response.json()
+
+      setEvaluation(data.evaluation)
+      setScreen('feedback')
+    } catch (err) {
+      setError(err.message || 'Answer submission failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function nextQuestion() {
+    setError('')
+    setAnswer('')
+    setEvaluation(null)
+
+    if (currentIndex < questions.length - 1) {
+      setCurrentIndex((index) => index + 1)
+      setScreen('interview')
+      return
+    }
+
+    setLoading(true)
+
+    try {
+      const response = await fetch(
+        `${API_BASE}/api/interviews/${interviewId}/results`,
+      )
+
+      if (!response.ok) {
+        throw new Error('Could not load interview results')
+      }
+
+      const results = await response.json()
+      setReport(results)
+      setScreen('results')
+    } catch (err) {
+      setError(err.message || 'Could not load results')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  function resetToHome() {
+    setScreen('home')
+    setInterviewId(null)
+    setQuestions([])
+    setCurrentIndex(0)
+    setAnswer('')
+    setEvaluation(null)
+    setReport(null)
+    setError('')
+  }
+
+  const progress =
+    questions.length > 0
+      ? ((currentIndex + 1) / questions.length) * 100
+      : 0
 
   return (
-    <main className="min-h-screen overflow-hidden bg-[#f5f7f2] text-[#18332f]">
-      <div className="relative mx-auto flex min-h-screen max-w-7xl flex-col px-6 py-6 sm:px-10 lg:px-16">
+    <main className="min-h-screen bg-[#f5f7f2] text-[#18332f]">
+      <div className="relative mx-auto min-h-screen max-w-7xl px-6 py-6 sm:px-10 lg:px-16">
         <div className="pointer-events-none absolute -right-24 -top-32 h-80 w-80 rounded-full bg-[#d7e8c7] blur-2xl" />
         <div className="pointer-events-none absolute -bottom-40 -left-32 h-96 w-96 rounded-full bg-[#f4d7a1] blur-3xl" />
-        <header className="relative flex items-center justify-between">
-          <a className="text-lg font-bold tracking-tight" href="/">AI<span className="text-[#e06b45]">-</span>Interviewer</a>
-          <div className="flex items-center gap-3">
-            <span className={`rounded-full px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] ${backendStatus === 'connected' ? 'bg-[#d7e8c7] text-[#315c3d]' : backendStatus === 'unavailable' ? 'bg-[#f7d5c8] text-[#a1452c]' : 'border border-[#bed0c3] bg-white/60 text-[#52716a]'}`}>
-              {connectionMessage}
-            </span>
-            <span className="hidden rounded-full border border-[#bed0c3] bg-white/60 px-4 py-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#52716a] sm:inline-block">Practice with purpose</span>
-          </div>
+
+        <header className="relative flex items-center justify-between border-b border-[#d4dfd4] pb-5">
+          <button
+            onClick={resetToHome}
+            className="text-lg font-bold tracking-tight"
+          >
+            AI<span className="text-[#e06b45]">-</span>Interviewer
+          </button>
+
+          <span className="rounded-full bg-[#d7e8c7] px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#315c3d]">
+            AI Interview Practice
+          </span>
         </header>
-        <section className="relative flex flex-1 items-center py-20 lg:py-24">
-          <div className="grid w-full items-center gap-16 lg:grid-cols-[1.05fr_0.95fr] lg:gap-20">
-            <div className="max-w-2xl">
-              <p className="mb-6 flex items-center gap-3 text-sm font-semibold uppercase tracking-[0.22em] text-[#e06b45]"><span className="h-px w-8 bg-[#e06b45]" />Your next opportunity starts here</p>
-              <h1 className="max-w-xl text-5xl font-bold leading-[1.02] tracking-[-0.04em] sm:text-7xl">Meet your interview with confidence.</h1>
-              <p className="mt-8 max-w-lg text-lg leading-8 text-[#52716a]">AI-powered mock interview platform for technical and HR interview practice.</p>
-              <button className="mt-10 rounded-full bg-[#e06b45] px-7 py-4 text-sm font-bold text-white shadow-[0_12px_24px_-12px_rgba(224,107,69,0.8)] transition-transform hover:-translate-y-1 focus:outline-none focus:ring-4 focus:ring-[#e06b45]/30">Start Interview <span aria-hidden="true" className="ml-3">&#8594;</span></button>
-            </div>
-            <div className="relative mx-auto w-full max-w-md lg:justify-self-end">
-              <div className="relative aspect-[4/5] overflow-hidden rounded-[2rem] bg-[#18332f] p-6 text-white shadow-2xl shadow-[#18332f]/20 sm:p-8">
-                <div className="absolute -right-16 -top-16 h-48 w-48 rounded-full border-[28px] border-[#e06b45]" />
-                <div className="absolute -bottom-16 -left-14 h-44 w-44 rounded-full border-[24px] border-[#c6ddba]" />
-                <div className="relative flex h-full flex-col justify-between">
-                  <div className="flex items-center justify-between text-sm text-[#c6ddba]"><span>SESSION 01</span><span className="h-2 w-2 rounded-full bg-[#e06b45]" /></div>
-                  <div><p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#c6ddba]">Ready when you are</p><p className="mt-4 text-4xl font-bold leading-tight tracking-[-0.03em]">Think clearly.<br />Answer boldly.</p></div>
-                  <div className="border-t border-white/20 pt-5 text-sm leading-6 text-[#b5c9c1]">Build your confidence one thoughtful answer at a time.</div>
+
+        {error && (
+          <div className="relative mx-auto mt-6 max-w-4xl rounded-2xl border border-[#e7b7a7] bg-[#fff1ec] px-5 py-4 text-sm font-medium text-[#a1452c]">
+            {error}
+          </div>
+        )}
+
+        {screen === 'home' && (
+          <section className="relative flex min-h-[75vh] items-center py-16">
+            <div className="grid w-full items-center gap-16 lg:grid-cols-[1.05fr_0.95fr]">
+              <div className="max-w-2xl">
+                <p className="mb-6 flex items-center gap-3 text-sm font-semibold uppercase tracking-[0.22em] text-[#e06b45]">
+                  <span className="h-px w-8 bg-[#e06b45]" />
+                  Your next opportunity starts here
+                </p>
+
+                <h1 className="text-5xl font-bold leading-[1.02] tracking-[-0.04em] sm:text-7xl">
+                  Meet your interview with confidence.
+                </h1>
+
+                <p className="mt-8 max-w-lg text-lg leading-8 text-[#52716a]">
+                  Practice realistic technical and HR interviews with AI-generated
+                  questions and instant answer evaluation.
+                </p>
+
+                <button
+                  onClick={() => setScreen('setup')}
+                  className="mt-10 rounded-full bg-[#e06b45] px-8 py-4 text-sm font-bold text-white shadow-lg transition hover:-translate-y-1"
+                >
+                  Start Interview
+                  <span className="ml-3">→</span>
+                </button>
+              </div>
+
+              <div className="rounded-[2rem] bg-[#18332f] p-8 text-white shadow-2xl">
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#c6ddba]">
+                  AI-powered practice
+                </p>
+
+                <h2 className="mt-5 text-4xl font-bold">
+                  Think clearly.
+                  <br />
+                  Answer boldly.
+                </h2>
+
+                <div className="mt-10 space-y-4">
+                  {[
+                    'Role-specific questions',
+                    'AI answer evaluation',
+                    'Actionable feedback',
+                    'Performance report',
+                  ].map((item) => (
+                    <div
+                      key={item}
+                      className="flex items-center gap-3 border-t border-white/10 pt-4 text-[#d7e8c7]"
+                    >
+                      <span className="text-[#e06b45]">✓</span>
+                      {item}
+                    </div>
+                  ))}
                 </div>
               </div>
-              <div className="absolute -bottom-5 -right-4 rounded-2xl border border-[#bed0c3] bg-white px-5 py-4 shadow-xl sm:-right-8"><p className="text-2xl font-bold text-[#18332f]">01</p><p className="mt-1 text-xs font-semibold uppercase tracking-[0.16em] text-[#52716a]">First step</p></div>
             </div>
-          </div>
-        </section>
-        <footer className="relative flex items-center justify-between border-t border-[#d4dfd4] py-5 text-xs font-semibold uppercase tracking-[0.16em] text-[#789087]"><span>Technical + HR</span><span>Practice. Improve. Succeed.</span></footer>
+          </section>
+        )}
+
+        {screen === 'setup' && (
+          <section className="relative mx-auto max-w-3xl py-16">
+            <div className="mb-10">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#e06b45]">
+                Step 01
+              </p>
+
+              <h1 className="mt-3 text-5xl font-bold tracking-tight">
+                Set up your interview.
+              </h1>
+
+              <p className="mt-4 text-[#52716a]">
+                Tell the interviewer what you are preparing for.
+              </p>
+            </div>
+
+            <div className="space-y-6 rounded-[2rem] bg-white p-8 shadow-xl">
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold">
+                  Target role
+                </span>
+                <input
+                  value={role}
+                  onChange={(e) => setRole(e.target.value)}
+                  className="w-full rounded-xl border border-[#cbd8ce] px-4 py-3 outline-none focus:border-[#e06b45]"
+                  placeholder="e.g. Data Scientist"
+                />
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold">
+                  Experience level
+                </span>
+                <select
+                  value={experience}
+                  onChange={(e) => setExperience(e.target.value)}
+                  className="w-full rounded-xl border border-[#cbd8ce] bg-white px-4 py-3 outline-none"
+                >
+                  <option>Fresher</option>
+                  <option>0-2 years</option>
+                  <option>2-5 years</option>
+                  <option>5+ years</option>
+                </select>
+              </label>
+
+              <label className="block">
+                <span className="mb-2 block text-sm font-bold">
+                  Interview type
+                </span>
+                <select
+                  value={interviewType}
+                  onChange={(e) => setInterviewType(e.target.value)}
+                  className="w-full rounded-xl border border-[#cbd8ce] bg-white px-4 py-3 outline-none"
+                >
+                  <option>Technical</option>
+                  <option>HR</option>
+                  <option>Behavioral</option>
+                  <option>Mixed</option>
+                </select>
+              </label>
+
+              <button
+                onClick={() => setScreen('document-upload')}
+                disabled={loading}
+                className="w-full rounded-xl bg-[#e06b45] px-6 py-4 font-bold text-white transition hover:bg-[#c85b39] disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {loading ? 'Preparing your interview...' : 'Begin Interview →'}
+              </button>
+            </div>
+          </section>
+        )}
+
+        {screen === 'document-upload' && (
+  <section className="relative mx-auto max-w-3xl py-16">
+    <div className="mb-10">
+      <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#e06b45]">
+        Step 02
+      </p>
+
+      <h1 className="mt-3 text-5xl font-bold tracking-tight">
+        Personalize your interview.
+      </h1>
+
+      <p className="mt-4 text-[#52716a]">
+        Upload your resume or a job description. This is optional.
+      </p>
+    </div>
+
+    <div className="rounded-[2rem] bg-white p-8 shadow-xl">
+      <div className="rounded-2xl border-2 border-dashed border-[#cbd8ce] bg-[#fafcf9] p-10 text-center">
+        <div className="text-5xl">📄</div>
+
+        <h2 className="mt-5 text-2xl font-bold">
+          Upload Resume or Job Description
+        </h2>
+
+        <p className="mx-auto mt-3 max-w-lg text-[#789087]">
+          Upload a PDF, DOCX, or TXT file and AI will extract relevant
+          information to personalize your interview.
+        </p>
+
+        <label className="mt-8 inline-block cursor-pointer rounded-full bg-[#18332f] px-7 py-3 font-bold text-white transition hover:-translate-y-0.5">
+          {loading ? 'AI is analyzing...' : 'Choose File'}
+
+          <input
+            type="file"
+            accept=".pdf,.docx,.txt"
+            className="hidden"
+            disabled={loading}
+            onChange={(e) => uploadDocument(e.target.files?.[0])}
+          />
+        </label>
+
+        <p className="mt-4 text-xs text-[#789087]">
+          PDF, DOCX or TXT · Maximum 5 MB
+        </p>
+      </div>
+
+      <div className="mt-6 flex items-center justify-between">
+        <span className="text-sm text-[#789087]">
+          Don't have a resume? No problem.
+        </span>
+
+        <button
+          type="button"
+          onClick={startInterview}
+          disabled={loading}
+          className="rounded-full bg-[#e06b45] px-6 py-3 font-bold text-white transition hover:-translate-y-0.5 disabled:opacity-60"
+        >
+          Skip & Start Interview →
+        </button>
+      </div>
+    </div>
+  </section>
+)}
+
+{screen === 'document-review' && documentContext && (
+  <section className="relative mx-auto max-w-5xl py-16">
+    <div className="mb-10">
+      <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#e06b45]">
+        Step 03
+      </p>
+
+      <h1 className="mt-3 text-5xl font-bold tracking-tight">
+        Review your profile.
+      </h1>
+
+      <p className="mt-4 max-w-2xl text-[#52716a]">
+        AI extracted the following information from{' '}
+        <span className="font-semibold text-[#18332f]">
+          {documentName}
+        </span>
+        . You can edit anything before we generate your interview.
+      </p>
+    </div>
+
+    <div className="space-y-6 rounded-[2rem] bg-white p-8 shadow-xl">
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Document Type
+        </label>
+
+        <input
+          type="text"
+          value={documentContext.document_type || ''}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              document_type: e.target.value,
+            })
+          }
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Target Role
+        </label>
+
+        <input
+          type="text"
+          value={documentContext.role || ''}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              role: e.target.value,
+            })
+          }
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Experience
+        </label>
+
+        <textarea
+          value={documentContext.experience || ''}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              experience: e.target.value,
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Skills
+        </label>
+
+        <textarea
+          value={(documentContext.skills || []).join(', ')}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              skills: e.target.value
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+          placeholder="Python, SQL, TensorFlow..."
+        />
+        <p className="mt-2 text-xs text-[#789087]">
+          Separate skills with commas.
+        </p>
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Responsibilities
+        </label>
+
+        <textarea
+          value={(documentContext.responsibilities || []).join(', ')}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              responsibilities: e.target.value
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+          placeholder="Build ML models, analyze data..."
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Requirements
+        </label>
+
+        <textarea
+          value={(documentContext.requirements || []).join(', ')}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              requirements: e.target.value
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+          placeholder="Python, SQL, machine learning..."
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Education
+        </label>
+
+        <textarea
+          value={(documentContext.education || []).join(', ')}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              education: e.target.value
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Projects
+        </label>
+
+        <textarea
+          value={(documentContext.projects || []).join(', ')}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              projects: e.target.value
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+          placeholder="Project 1, Project 2..."
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Summary
+        </label>
+
+        <textarea
+          value={documentContext.summary || ''}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              summary: e.target.value,
+            })
+          }
+          rows={5}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+          placeholder="Candidate summary..."
+        />
+      </div>
+
+      <div className="flex justify-end border-t border-[#e5ece7] pt-6">
+        <button
+          type="button"
+          onClick={startInterview}
+          disabled={loading}
+          className="rounded-full bg-[#e06b45] px-8 py-4 font-bold text-white transition hover:-translate-y-0.5 disabled:opacity-60"
+        >
+          {loading ? 'Generating Interview...' : 'Generate My Interview →'}
+        </button>
+      </div>
+    </div>
+  </section>
+)}
+
+        {screen === 'interview' && currentQuestion && (
+          <section className="relative mx-auto max-w-4xl py-12">
+            <div className="mb-8 flex items-end justify-between">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#e06b45]">
+                  Technical Interview
+                </p>
+
+                <h1 className="mt-2 text-3xl font-bold">
+                  Question {currentIndex + 1} of {questions.length}
+                </h1>
+              </div>
+
+              <span className="rounded-full bg-white px-4 py-2 text-sm font-bold shadow-sm">
+                {currentQuestion.difficulty}
+              </span>
+            </div>
+
+            <div className="mb-8 h-2 overflow-hidden rounded-full bg-[#d9e3da]">
+              <div
+                className="h-full rounded-full bg-[#e06b45] transition-all"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+
+            <div className="rounded-[2rem] bg-white p-8 shadow-xl sm:p-10">
+              <p className="text-2xl font-bold leading-relaxed">
+                {currentQuestion.question_text}
+              </p>
+
+              <textarea
+                value={answer}
+                onChange={(e) => setAnswer(e.target.value)}
+                className="mt-8 min-h-52 w-full resize-none rounded-2xl border border-[#cbd8ce] bg-[#fafcf9] p-5 leading-7 outline-none transition focus:border-[#e06b45] focus:ring-4 focus:ring-[#e06b45]/10"
+                placeholder="Type your answer here..."
+              />
+
+              <div className="mt-6 flex items-center justify-between">
+                <span className="text-sm text-[#789087]">
+                  Take your time. Explain your reasoning clearly.
+                </span>
+
+                <button
+                  onClick={submitAnswer}
+                  disabled={loading}
+                  className="rounded-full bg-[#18332f] px-7 py-3 font-bold text-white transition hover:-translate-y-0.5 disabled:opacity-60"
+                >
+                  {loading ? 'AI is evaluating...' : 'Submit Answer →'}
+                </button>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {screen === 'feedback' && evaluation && (
+          <section className="relative mx-auto max-w-4xl py-12">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#e06b45]">
+              AI Evaluation
+            </p>
+
+            <h1 className="mt-3 text-5xl font-bold tracking-tight">
+              Here's how you did.
+            </h1>
+
+            <div className="mt-10 grid gap-5 sm:grid-cols-4">
+              {[
+                ['Correctness', evaluation.correctness],
+                ['Relevance', evaluation.relevance],
+                ['Clarity', evaluation.clarity],
+                ['Depth', evaluation.depth],
+              ].map(([label, score]) => (
+                <div
+                  key={label}
+                  className="rounded-2xl bg-white p-5 text-center shadow-lg"
+                >
+                  <p className="text-sm font-semibold text-[#52716a]">
+                    {label}
+                  </p>
+                  <p className="mt-2 text-4xl font-bold text-[#18332f]">
+                    {score}
+                  </p>
+                  <p className="text-xs text-[#789087]">/ 10</p>
+                </div>
+              ))}
+            </div>
+
+            <div className="mt-6 rounded-[2rem] bg-[#18332f] p-8 text-white shadow-xl">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#c6ddba]">
+                Overall score
+              </p>
+
+              <p className="mt-2 text-6xl font-bold">
+                {evaluation.overall_score}
+                <span className="text-2xl text-[#b5c9c1]"> / 10</span>
+              </p>
+            </div>
+
+            <div className="mt-6 rounded-[2rem] bg-white p-8 shadow-xl">
+              <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#e06b45]">
+                Feedback
+              </p>
+
+              <p className="mt-4 text-lg leading-8 text-[#52716a]">
+                {evaluation.feedback}
+              </p>
+            </div>
+
+            <button
+              onClick={nextQuestion}
+              disabled={loading}
+              className="mt-8 rounded-full bg-[#e06b45] px-8 py-4 font-bold text-white shadow-lg disabled:opacity-60"
+            >
+              {loading
+                ? 'Loading...'
+                : currentIndex === questions.length - 1
+                  ? 'View Final Report →'
+                  : 'Next Question →'}
+            </button>
+          </section>
+        )}
+
+        {screen === 'results' && report && (
+          <section className="relative mx-auto max-w-5xl py-12">
+            <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#e06b45]">
+              Interview Complete
+            </p>
+
+            <h1 className="mt-3 text-5xl font-bold tracking-tight">
+              Your interview report.
+            </h1>
+
+            <div className="mt-10 grid gap-6 lg:grid-cols-[0.8fr_1.2fr]">
+              <div className="rounded-[2rem] bg-[#18332f] p-8 text-white shadow-xl">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#c6ddba]">
+                  Overall score
+                </p>
+
+                <p className="mt-4 text-7xl font-bold">
+                  {report.overall_score}
+                </p>
+
+                <p className="mt-2 text-[#b5c9c1]">out of 10</p>
+
+                <div className="mt-10 border-t border-white/10 pt-6">
+                  <p className="text-sm text-[#b5c9c1]">Role</p>
+                  <p className="mt-1 text-xl font-bold">{report.role}</p>
+                </div>
+              </div>
+
+              <div className="rounded-[2rem] bg-white p-8 shadow-xl">
+                <p className="text-sm font-semibold uppercase tracking-[0.18em] text-[#e06b45]">
+                  Performance
+                </p>
+
+                <div className="mt-6 space-y-4">
+                  {report.questions.map((item, index) => (
+                    <div
+                      key={item.question_id}
+                      className="rounded-xl border border-[#dce5de] p-4"
+                    >
+                      <div className="flex items-start justify-between gap-4">
+                        <p className="font-semibold">
+                          Q{index + 1}. {item.question}
+                        </p>
+
+                        <span className="shrink-0 rounded-full bg-[#d7e8c7] px-3 py-1 text-sm font-bold text-[#315c3d]">
+                          {item.evaluation
+                            ? `${item.evaluation.overall_score}/10`
+                            : 'Not answered'}
+                        </span>
+                      </div>
+
+                      {item.evaluation && (
+                        <p className="mt-3 text-sm leading-6 text-[#52716a]">
+                          {item.evaluation.feedback}
+                        </p>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-6 grid gap-6 md:grid-cols-2">
+              <div className="rounded-[2rem] bg-white p-8 shadow-xl">
+                <h2 className="text-xl font-bold">Strengths</h2>
+
+                {report.strengths.length > 0 ? (
+                  <ul className="mt-5 space-y-3">
+                    {report.strengths.map((strength, index) => (
+                      <li key={index} className="flex gap-3 text-[#52716a]">
+                        <span className="font-bold text-[#e06b45]">✓</span>
+                        <span>{strength}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-4 text-[#789087]">
+                    Complete more answers to identify strengths.
+                  </p>
+                )}
+              </div>
+
+              <div className="rounded-[2rem] bg-white p-8 shadow-xl">
+                <h2 className="text-xl font-bold">Areas to improve</h2>
+
+                {report.gaps.length > 0 ? (
+                  <ul className="mt-5 space-y-3">
+                    {report.gaps.map((gap, index) => (
+                      <li key={index} className="flex gap-3 text-[#52716a]">
+                        <span className="font-bold text-[#e06b45]">→</span>
+                        <span>{gap}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-4 text-[#789087]">
+                    No major gaps identified in the evaluated answers.
+                  </p>
+                )}
+              </div>
+            </div>
+
+            <button
+              onClick={resetToHome}
+              className="mt-8 rounded-full bg-[#e06b45] px-8 py-4 font-bold text-white shadow-lg"
+            >
+              Start Another Interview →
+            </button>
+          </section>
+        )}
       </div>
     </main>
   )
