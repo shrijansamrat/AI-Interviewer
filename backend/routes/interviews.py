@@ -48,6 +48,15 @@ def create_interview(
 
     return interview
 
+@router.get("/", response_model=list[InterviewResponse])
+def get_interview_history(
+    db: Session = Depends(get_db),
+) -> list[InterviewResponse]:
+    interviews = db.scalars(
+        select(Interview).order_by(Interview.created_at.desc())
+    ).all()
+
+    return list(interviews)
 
 @router.get("/{interview_id}", response_model=InterviewResponse)
 def get_interview(

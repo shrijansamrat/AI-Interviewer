@@ -15,6 +15,7 @@ function App() {
   const [answer, setAnswer] = useState('')
   const [evaluation, setEvaluation] = useState(null)
   const [report, setReport] = useState(null)
+  const [history, setHistory] = useState([])
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
@@ -22,6 +23,27 @@ function App() {
   const [documentName, setDocumentName] = useState('')
 
   const currentQuestion = questions[currentIndex]
+
+  async function loadHistory() {
+  setLoading(true)
+  setError('')
+
+  try {
+    const response = await fetch(`${API_BASE}/api/interviews/`)
+
+    if (!response.ok) {
+      throw new Error('Could not load interview history')
+    }
+
+    const data = await response.json()
+    setHistory(data)
+    setScreen('history')
+  } catch (err) {
+    setError(err.message || 'Something went wrong')
+  } finally {
+    setLoading(false)
+  }
+}
 
   async function startInterview() {
     setLoading(true)
