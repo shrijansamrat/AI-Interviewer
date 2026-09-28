@@ -18,6 +18,8 @@ function App() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [documentContext, setDocumentContext] = useState(null)
+  const [documentName, setDocumentName] = useState('')
 
   const currentQuestion = questions[currentIndex]
 
@@ -46,12 +48,20 @@ function App() {
 
       setInterviewId(interview.id)
 
+      
       const generateResponse = await fetch(
         `${API_BASE}/api/interviews/${interview.id}/generate-questions`,
         {
           method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            document_context: documentContext,
+          }),
         },
       )
+
 
       if (!generateResponse.ok) {
         const data = await generateResponse.json()
@@ -79,6 +89,41 @@ function App() {
       setLoading(false)
     }
   }
+  async function uploadDocument(file) {
+  if (!file) {
+    return
+  }
+
+  setLoading(true)
+  setError('')
+
+  try {
+    const formData = new FormData()
+    formData.append('file', file)
+
+    const response = await fetch(
+      `${API_BASE}/api/interviews/documents/parse`,
+      {
+        method: 'POST',
+        body: formData,
+      },
+    )
+
+    const data = await response.json()
+
+    if (!response.ok) {
+      throw new Error(data.detail || 'Could not parse the document')
+    }
+
+    setDocumentName(data.filename)
+    setDocumentContext(data.parsed_context)
+    setScreen('document-review')
+  } catch (err) {
+    setError(err.message || 'Document parsing failed')
+  } finally {
+    setLoading(false)
+  }
+}
 
   async function submitAnswer() {
     if (!answer.trim()) {
@@ -313,7 +358,7 @@ function App() {
               </label>
 
               <button
-                onClick={startInterview}
+                onClick={() => setScreen('document-upload')}
                 disabled={loading}
                 className="w-full rounded-xl bg-[#e06b45] px-6 py-4 font-bold text-white transition hover:bg-[#c85b39] disabled:cursor-not-allowed disabled:opacity-60"
               >
@@ -322,6 +367,291 @@ function App() {
             </div>
           </section>
         )}
+
+        {screen === 'document-upload' && (
+  <section className="relative mx-auto max-w-3xl py-16">
+    <div className="mb-10">
+      <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#e06b45]">
+        Step 02
+      </p>
+
+      <h1 className="mt-3 text-5xl font-bold tracking-tight">
+        Personalize your interview.
+      </h1>
+
+      <p className="mt-4 text-[#52716a]">
+        Upload your resume or a job description. This is optional.
+      </p>
+    </div>
+
+    <div className="rounded-[2rem] bg-white p-8 shadow-xl">
+      <div className="rounded-2xl border-2 border-dashed border-[#cbd8ce] bg-[#fafcf9] p-10 text-center">
+        <div className="text-5xl">📄</div>
+
+        <h2 className="mt-5 text-2xl font-bold">
+          Upload Resume or Job Description
+        </h2>
+
+        <p className="mx-auto mt-3 max-w-lg text-[#789087]">
+          Upload a PDF, DOCX, or TXT file and AI will extract relevant
+          information to personalize your interview.
+        </p>
+
+        <label className="mt-8 inline-block cursor-pointer rounded-full bg-[#18332f] px-7 py-3 font-bold text-white transition hover:-translate-y-0.5">
+          {loading ? 'AI is analyzing...' : 'Choose File'}
+
+          <input
+            type="file"
+            accept=".pdf,.docx,.txt"
+            className="hidden"
+            disabled={loading}
+            onChange={(e) => uploadDocument(e.target.files?.[0])}
+          />
+        </label>
+
+        <p className="mt-4 text-xs text-[#789087]">
+          PDF, DOCX or TXT · Maximum 5 MB
+        </p>
+      </div>
+
+      <div className="mt-6 flex items-center justify-between">
+        <span className="text-sm text-[#789087]">
+          Don't have a resume? No problem.
+        </span>
+
+        <button
+          type="button"
+          onClick={startInterview}
+          disabled={loading}
+          className="rounded-full bg-[#e06b45] px-6 py-3 font-bold text-white transition hover:-translate-y-0.5 disabled:opacity-60"
+        >
+          Skip & Start Interview →
+        </button>
+      </div>
+    </div>
+  </section>
+)}
+
+{screen === 'document-review' && documentContext && (
+  <section className="relative mx-auto max-w-5xl py-16">
+    <div className="mb-10">
+      <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#e06b45]">
+        Step 03
+      </p>
+
+      <h1 className="mt-3 text-5xl font-bold tracking-tight">
+        Review your profile.
+      </h1>
+
+      <p className="mt-4 max-w-2xl text-[#52716a]">
+        AI extracted the following information from{' '}
+        <span className="font-semibold text-[#18332f]">
+          {documentName}
+        </span>
+        . You can edit anything before we generate your interview.
+      </p>
+    </div>
+
+    <div className="space-y-6 rounded-[2rem] bg-white p-8 shadow-xl">
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Document Type
+        </label>
+
+        <input
+          type="text"
+          value={documentContext.document_type || ''}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              document_type: e.target.value,
+            })
+          }
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Target Role
+        </label>
+
+        <input
+          type="text"
+          value={documentContext.role || ''}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              role: e.target.value,
+            })
+          }
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Experience
+        </label>
+
+        <textarea
+          value={documentContext.experience || ''}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              experience: e.target.value,
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Skills
+        </label>
+
+        <textarea
+          value={(documentContext.skills || []).join(', ')}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              skills: e.target.value
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+          placeholder="Python, SQL, TensorFlow..."
+        />
+        <p className="mt-2 text-xs text-[#789087]">
+          Separate skills with commas.
+        </p>
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Responsibilities
+        </label>
+
+        <textarea
+          value={(documentContext.responsibilities || []).join(', ')}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              responsibilities: e.target.value
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+          placeholder="Build ML models, analyze data..."
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Requirements
+        </label>
+
+        <textarea
+          value={(documentContext.requirements || []).join(', ')}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              requirements: e.target.value
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+          placeholder="Python, SQL, machine learning..."
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Education
+        </label>
+
+        <textarea
+          value={(documentContext.education || []).join(', ')}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              education: e.target.value
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Projects
+        </label>
+
+        <textarea
+          value={(documentContext.projects || []).join(', ')}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              projects: e.target.value
+                .split(',')
+                .map((item) => item.trim())
+                .filter(Boolean),
+            })
+          }
+          rows={3}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+          placeholder="Project 1, Project 2..."
+        />
+      </div>
+
+      <div>
+        <label className="text-sm font-bold text-[#18332f]">
+          Summary
+        </label>
+
+        <textarea
+          value={documentContext.summary || ''}
+          onChange={(e) =>
+            setDocumentContext({
+              ...documentContext,
+              summary: e.target.value,
+            })
+          }
+          rows={5}
+          className="mt-2 w-full rounded-xl border border-[#cbd8ce] bg-[#fafcf9] px-4 py-3 outline-none focus:border-[#e06b45]"
+          placeholder="Candidate summary..."
+        />
+      </div>
+
+      <div className="flex justify-end border-t border-[#e5ece7] pt-6">
+        <button
+          type="button"
+          onClick={startInterview}
+          disabled={loading}
+          className="rounded-full bg-[#e06b45] px-8 py-4 font-bold text-white transition hover:-translate-y-0.5 disabled:opacity-60"
+        >
+          {loading ? 'Generating Interview...' : 'Generate My Interview →'}
+        </button>
+      </div>
+    </div>
+  </section>
+)}
 
         {screen === 'interview' && currentQuestion && (
           <section className="relative mx-auto max-w-4xl py-12">

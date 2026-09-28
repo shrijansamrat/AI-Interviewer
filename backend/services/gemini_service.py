@@ -36,16 +36,36 @@ def generate_interview_questions(
     experience: str,
     interview_type: str,
     question_count: int = 5,
+    document_context: dict | None = None,
 ) -> dict[str, list[dict[str, str | int]]]:
     """Generate and validate interview questions using Gemini."""
     if question_count < 1:
         raise ValueError("question_count must be at least 1")
+    context_text = ""
+
+    if document_context:
+        context_text = f"""
+Additional candidate context extracted from the candidate's resume or job description:
+- Document type: {document_context.get("document_type", "")}
+- Target role: {document_context.get("role", "")}
+- Experience: {document_context.get("experience", "")}
+- Skills: {", ".join(document_context.get("skills", []))}
+- Responsibilities: {", ".join(document_context.get("responsibilities", []))}
+- Requirements: {", ".join(document_context.get("requirements", []))}
+- Education: {", ".join(document_context.get("education", []))}
+- Projects: {", ".join(document_context.get("projects", []))}
+- Summary: {document_context.get("summary", "")}
+
+Use this context to personalize the interview questions.
+Do not invent facts that are not present in the candidate context.
+""".strip()
 
     prompt = f"""
 Generate exactly {question_count} interview questions for the following candidate:
 - Role: {role}
 - Experience level: {experience}
 - Interview type: {interview_type}
+{context_text}
 
 Make the questions appropriate for the role, experience level, and interview type.
 Use a suitable mixture of question types for the interview type. For a Technical
@@ -185,3 +205,89 @@ Return only valid JSON using exactly this structure:
         ) from error
 
     return evaluation.model_dump()
+class ParsedDocumentContext(BaseModel):
+    document_type: Literal["resume", "job_description", "unknown"]
+    role: str = ""
+    experience: str = ""
+    skills: list[str] = []
+    responsibilities: list[str] = []
+    requirements: list[str] = []
+    education: list[str] = []
+    projects: list[str] = []
+    summary: str = ""
+
+
+def parse_document_context(
+    document_text: str,
+    document_type_hint: str = "unknown",
+) -> dict:
+    """Extract structured resume/JD context using Gemini."""
+
+    if not document_text.strip():
+        raise ValueError("Document text cannot be empty")
+
+    prompt = f"""
+Analyze the following resume or job description.
+
+Document type hint: {document_type_hint}
+
+Extract useful information that can be used to personalize a technical or HR
+interview.
+
+Return ONLY valid JSON with exactly this structure:
+
+{{
+  "document_type": "resume",
+  "role": "",
+  "experience": "",
+  "skills": [],
+  "responsibilities": [],
+  "requirements": [],
+  "education": [],
+  "projects": [],
+  "summary": ""
+}}
+
+Rules:
+- document_type must be exactly one of:
+  "resume", "job_description", "unknown"
+- Identify the most likely target role.
+- Extract important technical and professional skills.
+- For a job description, extract responsibilities and requirements.
+- For a resume, extract education, projects, experience and skills when available.
+- Do not invent information that is not present.
+- Keep extracted information concise and useful for interview generation.
+
+Document:
+
+{document_text}
+""".strip()
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-flash-lite-latest",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+                response_schema=ParsedDocumentContext,
+            ),
+        )
+    except Exception as error:
+        raise RuntimeError(
+            f"Gemini document parsing failed: {error}"
+        ) from error
+
+    response_text = response.text
+
+    if not response_text:
+        raise RuntimeError("Gemini returned an empty document parsing response")
+
+    try:
+        response_data = json.loads(response_text)
+        parsed_context = ParsedDocumentContext.model_validate(response_data)
+    except (json.JSONDecodeError, ValidationError, TypeError) as error:
+        raise RuntimeError(
+            "Gemini returned invalid document context"
+        ) from error
+
+    return parsed_context.model_dump()    

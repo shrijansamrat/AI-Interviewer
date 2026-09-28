@@ -1,10 +1,22 @@
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from services.document_parser import extract_text
+from services.gemini_service import (
+    GeneratedQuestions,
+    generate_interview_questions,
+    parse_document_context,
+)
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import get_db
 from models import Answer, Interview, Question
-from schemas import AnswerCreate, InterviewCreate, InterviewResponse
+from schemas import (
+    AnswerCreate,
+    GenerateQuestionsRequest,
+    InterviewCreate,
+    InterviewResponse,
+)
 from services.gemini_service import (
     GeneratedQuestions,
     evaluate_answer,
@@ -60,6 +72,7 @@ def get_interview(
 )
 def generate_questions(
     interview_id: int,
+    request: GenerateQuestionsRequest | None = None,
     db: Session = Depends(get_db),
 ) -> GeneratedQuestions:
     interview = db.get(Interview, interview_id)
@@ -80,12 +93,13 @@ def generate_questions(
         )
 
     try:
-        generated_questions = generate_interview_questions(
-            role=interview.role,
-            experience=interview.experience,
-            interview_type=interview.interview_type,
-            question_count=5,
-        )
+            generated_questions = generate_interview_questions(
+        role=interview.role,
+        experience=interview.experience,
+        interview_type=interview.interview_type,
+        question_count=5,
+        document_context=request.document_context if request else None,
+    )
     except Exception as error:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
@@ -325,4 +339,78 @@ def get_interview_results(
         "strengths": strengths,
         "gaps": gaps,
         "questions": results,
+    }
+
+@router.post("/documents/parse")
+async def parse_document(
+    file: UploadFile = File(...),
+):
+    MAX_FILE_SIZE = 5 * 1024 * 1024
+
+    allowed_extensions = {".pdf", ".docx", ".txt"}
+
+    filename = file.filename or ""
+    extension = filename.lower().rsplit(".", 1)[-1]
+
+    if f".{extension}" not in allowed_extensions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Unsupported file type. Please upload a PDF, DOCX, or TXT file.",
+        )
+
+    file_bytes = await file.read()
+
+    if len(file_bytes) > MAX_FILE_SIZE:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="File is too large. Maximum size is 5 MB.",
+        )
+
+    if not file_bytes:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Uploaded file is empty.",
+        )
+
+    try:
+        document_text = extract_text(filename, file_bytes)
+    except ValueError as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(error),
+        ) from error
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Could not extract text from the uploaded document.",
+        ) from error
+
+    if not document_text.strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="No readable text was found in the uploaded document.",
+        )
+
+    document_type_hint = (
+        "resume"
+        if "resume" in filename.lower() or "cv" in filename.lower()
+        else "job_description"
+        if "jd" in filename.lower() or "job" in filename.lower()
+        else "unknown"
+    )
+
+    try:
+        parsed_context = parse_document_context(
+            document_text=document_text,
+            document_type_hint=document_type_hint,
+        )
+    except Exception as error:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="AI document parsing failed.",
+        ) from error
+
+    return {
+        "filename": filename,
+        "parsed_context": parsed_context,
     }

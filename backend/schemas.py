@@ -23,3 +23,5 @@ class InterviewResponse(BaseModel):
 
 class AnswerCreate(BaseModel):
     answer_text: str    
+class GenerateQuestionsRequest(BaseModel):
+    document_context: Optional[dict] = None
