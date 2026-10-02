@@ -1,10 +1,33 @@
 import { useState } from 'react'
 
 const API_BASE = 'http://127.0.0.1:8000'
+async function apiFetch(url, options = {}, token = null) {
+  const headers = {
+    ...options.headers,
+  }
+
+  if (token) {
+    headers.Authorization = `Bearer ${token}`
+  }
+
+  return fetch(url, {
+    ...options,
+    headers,
+  })
+}
 
 function App() {
-  const [screen, setScreen] = useState('home')
-
+  const [screen, setScreen] = useState(
+    () => localStorage.getItem('access_token') ? 'home' : 'auth',
+  )
+  const [token, setToken] = useState(
+    () => localStorage.getItem('access_token'),
+  )
+  const [user, setUser] = useState(null)
+  const [authMode, setAuthMode] = useState('login')
+  const [authEmail, setAuthEmail] = useState('')
+  const [authPassword, setAuthPassword] = useState('')
+  const [accountMenuOpen, setAccountMenuOpen] = useState(false)
   const [role, setRole] = useState('Data Scientist')
   const [experience, setExperience] = useState('Fresher')
   const [interviewType, setInterviewType] = useState('Technical')
@@ -24,12 +47,101 @@ function App() {
 
   const currentQuestion = questions[currentIndex]
 
+  async function handleAuth(event) {
+    event.preventDefault()
+    setLoading(true)
+    setError('')
+
+    try {
+      const endpoint =
+        authMode === 'login' ? '/api/auth/login' : '/api/auth/register'
+
+      const payload = {
+        email: authEmail,
+        password: authPassword,
+      }
+
+      const response = await fetch(`${API_BASE}${endpoint}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          typeof data.detail === 'string'
+            ? data.detail
+            : 'Authentication failed',
+        )
+      }
+
+      let accessToken = data.access_token
+
+      if (authMode === 'register') {
+        const loginResponse = await fetch(`${API_BASE}/api/auth/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        })
+
+        const loginData = await loginResponse.json()
+
+        if (!loginResponse.ok) {
+          throw new Error(
+            typeof loginData.detail === 'string'
+              ? loginData.detail
+              : 'Registration succeeded, but login failed. Please log in.',
+          )
+        }
+
+        accessToken = loginData.access_token
+      }
+
+      if (!accessToken) {
+        throw new Error('The server did not return an access token.')
+      }
+
+      localStorage.setItem('access_token', accessToken)
+      setToken(accessToken)
+
+      const userResponse = await apiFetch(
+        `${API_BASE}/api/auth/me`,
+        {},
+        accessToken,
+      )
+
+      if (!userResponse.ok) {
+        throw new Error('Could not load your account details.')
+      }
+
+      const userData = await userResponse.json()
+      setUser(userData)
+      setAuthEmail('')
+      setAuthPassword('')
+      setScreen('home')
+    } catch (err) {
+      setError(err.message || 'Authentication failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   async function loadHistory() {
   setLoading(true)
   setError('')
 
   try {
-    const response = await fetch(`${API_BASE}/api/interviews/`)
+    const response = await apiFetch(
+  `${API_BASE}/api/interviews/`,
+  {},
+  token,
+)
 
     if (!response.ok) {
       throw new Error('Could not load interview history')
@@ -50,17 +162,21 @@ function App() {
     setError('')
 
     try {
-      const createResponse = await fetch(`${API_BASE}/api/interviews`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          role,
-          experience,
-          interview_type: interviewType,
-        }),
-      })
+      const createResponse = await apiFetch(
+  `${API_BASE}/api/interviews`,
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      role,
+      experience,
+      interview_type: interviewType,
+    }),
+  },
+  token,
+)
 
       if (!createResponse.ok) {
         throw new Error('Could not create interview')
@@ -71,18 +187,19 @@ function App() {
       setInterviewId(interview.id)
 
       
-      const generateResponse = await fetch(
-        `${API_BASE}/api/interviews/${interview.id}/generate-questions`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            document_context: documentContext,
-          }),
-        },
-      )
+      const generateResponse = await apiFetch(
+  `${API_BASE}/api/interviews/${interview.id}/generate-questions`,
+  {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      document_context: documentContext,
+    }),
+  },
+  token,
+)
 
 
       if (!generateResponse.ok) {
@@ -90,8 +207,11 @@ function App() {
         throw new Error(data.detail || 'Could not generate questions')
       }
 
-      const questionsResponse = await fetch(
+
+      const questionsResponse = await apiFetch(
         `${API_BASE}/api/interviews/${interview.id}/questions`,
+        {},
+        token,
       )
 
       if (!questionsResponse.ok) {
@@ -123,13 +243,14 @@ function App() {
     const formData = new FormData()
     formData.append('file', file)
 
-    const response = await fetch(
+    const response = await apiFetch(
       `${API_BASE}/api/interviews/documents/parse`,
-      {
-        method: 'POST',
-        body: formData,
-      },
-    )
+    {
+      method: 'POST',
+      body: formData,
+    },
+    token,
+  )
 
     const data = await response.json()
 
@@ -157,7 +278,7 @@ function App() {
     setError('')
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE}/api/interviews/questions/${currentQuestion.id}/answer`,
         {
           method: 'POST',
@@ -168,6 +289,7 @@ function App() {
             answer_text: answer,
           }),
         },
+        token,
       )
 
       if (!response.ok) {
@@ -200,9 +322,11 @@ function App() {
     setLoading(true)
 
     try {
-      const response = await fetch(
+      const response = await apiFetch(
         `${API_BASE}/api/interviews/${interviewId}/results`,
-      )
+        {},
+        token,
+)
 
       if (!response.ok) {
         throw new Error('Could not load interview results')
@@ -217,6 +341,18 @@ function App() {
       setLoading(false)
     }
   }
+  
+  function handleLogout() {
+  localStorage.removeItem('access_token')
+  setToken(null)
+  setUser(null)
+  setAccountMenuOpen(false)
+  setAuthMode('login')
+  setAuthEmail('')
+  setAuthPassword('')
+  setScreen('auth')
+  resetToHome()
+}
 
   function resetToHome() {
     setScreen('home')
@@ -240,23 +376,138 @@ function App() {
         <div className="pointer-events-none absolute -right-24 -top-32 h-80 w-80 rounded-full bg-[#d7e8c7] blur-2xl" />
         <div className="pointer-events-none absolute -bottom-40 -left-32 h-96 w-96 rounded-full bg-[#f4d7a1] blur-3xl" />
 
-        <header className="relative flex items-center justify-between border-b border-[#d4dfd4] pb-5">
-          <button
-            onClick={resetToHome}
-            className="text-lg font-bold tracking-tight"
-          >
-            AI<span className="text-[#e06b45]">-</span>Interviewer
-          </button>
+    <header className="relative flex items-center justify-between border-b border-[#d4dfd4] pb-5">
+      <button
+        onClick={resetToHome}
+        className="text-lg font-bold tracking-tight"
+      >
+    AI<span className="text-[#e06b45]">-</span>Interviewer
+  </button>
 
-          <span className="rounded-full bg-[#d7e8c7] px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#315c3d]">
-            AI Interview Practice
+  <div className="flex items-center gap-3">
+    <span className="rounded-full bg-[#d7e8c7] px-4 py-2 text-xs font-semibold uppercase tracking-[0.12em] text-[#315c3d]">
+      AI Interview Practice
+    </span>
+
+    {token && (
+      <div className="relative">
+        <button
+          type="button"
+          onClick={() => setAccountMenuOpen(!accountMenuOpen)}
+          className="flex items-center gap-2 rounded-full border border-[#d4dfd4] bg-white px-3 py-2 text-sm font-semibold text-[#315c3d] shadow-sm"
+        >
+          <span className="flex h-7 w-7 items-center justify-center rounded-full bg-[#d7e8c7] text-xs font-bold">
+            {(user?.email || 'U').charAt(0).toUpperCase()}
           </span>
-        </header>
+          <span className="max-w-40 truncate">
+            {user?.email || 'Account'}
+          </span>
+          <span>⌄</span>
+        </button>
+
+        {accountMenuOpen && (
+          <div className="absolute right-0 z-20 mt-2 w-56 rounded-2xl border border-[#d4dfd4] bg-white p-3 shadow-xl">
+            <p className="break-all px-2 py-2 text-xs text-[#52716a]">
+              {user?.email || 'Signed in'}
+            </p>
+            <div className="my-2 border-t border-[#e5ebe3]" />
+            <button
+              type="button"
+              onClick={handleLogout}
+              className="w-full rounded-xl px-3 py-2 text-left text-sm font-semibold text-[#a1452c] hover:bg-[#fff1ec]"
+            >
+              Log out
+            </button>
+          </div>
+        )}
+      </div>
+    )}
+  </div>
+</header>
+        
 
         {error && (
           <div className="relative mx-auto mt-6 max-w-4xl rounded-2xl border border-[#e7b7a7] bg-[#fff1ec] px-5 py-4 text-sm font-medium text-[#a1452c]">
             {error}
           </div>
+        )}
+
+
+        {screen === 'auth' && (
+          <section className="relative mx-auto flex min-h-[75vh] max-w-md items-center py-12">
+            <div className="w-full rounded-[2rem] bg-white p-8 shadow-xl">
+              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#e06b45]">
+                AI Interviewer
+              </p>
+
+              <h1 className="mt-4 text-4xl font-bold">
+                {authMode === 'login' ? 'Welcome back.' : 'Create account.'}
+              </h1>
+
+              <p className="mt-3 text-sm leading-6 text-[#52716a]">
+                {authMode === 'login'
+                  ? 'Log in to continue your interview preparation.'
+                  : 'Register to start your AI interview practice.'}
+              </p>
+
+              <form onSubmit={handleAuth} className="mt-8 space-y-5">
+                <label className="block">
+                  <span className="mb-2 block text-sm font-bold">Email</span>
+                  <input
+                    type="email"
+                    value={authEmail}
+                    onChange={(e) => setAuthEmail(e.target.value)}
+                    required
+                    autoComplete="email"
+                    className="w-full rounded-xl border border-[#cbd8ce] px-4 py-3 outline-none focus:border-[#e06b45]"
+                    placeholder="you@example.com"
+                  />
+                </label>
+
+                <label className="block">
+                  <span className="mb-2 block text-sm font-bold">Password</span>
+                  <input
+                    type="password"
+                    value={authPassword}
+                    onChange={(e) => setAuthPassword(e.target.value)}
+                    required
+                    minLength={8}
+                    autoComplete={authMode === 'login' ? 'current-password' : 'new-password'}
+                    className="w-full rounded-xl border border-[#cbd8ce] px-4 py-3 outline-none focus:border-[#e06b45]"
+                    placeholder="At least 8 characters"
+                  />
+                </label>
+
+                <button
+                  type="submit"
+                  disabled={loading}
+                  className="w-full rounded-xl bg-[#e06b45] px-6 py-4 font-bold text-white transition hover:bg-[#c85b39] disabled:opacity-60"
+                >
+                  {loading
+                    ? 'Please wait...'
+                    : authMode === 'login'
+                      ? 'Log In'
+                      : 'Create Account'}
+                </button>
+              </form>
+
+              <p className="mt-6 text-center text-sm text-[#52716a]">
+                {authMode === 'login'
+                  ? "Don't have an account?"
+                  : 'Already have an account?'}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAuthMode(authMode === 'login' ? 'register' : 'login')
+                    setError('')
+                  }}
+                  className="ml-2 font-bold text-[#e06b45] hover:underline"
+                >
+                  {authMode === 'login' ? 'Register' : 'Log in'}
+                </button>
+              </p>
+            </div>
+          </section>
         )}
 
         {screen === 'home' && (
@@ -282,6 +533,14 @@ function App() {
                   className="mt-10 rounded-full bg-[#e06b45] px-8 py-4 text-sm font-bold text-white shadow-lg transition hover:-translate-y-1"
                 >
                   Start Interview
+                  <span className="ml-3">→</span>
+                </button>
+                <button
+                  onClick={loadHistory}
+                  disabled={loading}
+                  className="mt-4 rounded-full border border-[#18332f] px-8 py-4 text-sm font-bold text-[#18332f] transition hover:bg-[#e5eee5] disabled:opacity-60"
+>
+                  {loading ? 'Loading History...' : 'View Interview History'}
                   <span className="ml-3">→</span>
                 </button>
               </div>
@@ -315,6 +574,98 @@ function App() {
                 </div>
               </div>
             </div>
+          </section>
+        )}
+
+                {screen === 'history' && (
+          <section className="relative mx-auto max-w-5xl py-16">
+            <div className="mb-10 flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#e06b45]">
+                  Your progress
+                </p>
+                <h1 className="mt-3 text-4xl font-bold tracking-tight">
+                  Interview History
+                </h1>
+                <p className="mt-3 text-[#52716a]">
+                  Review your previous interview sessions and performance.
+                </p>
+              </div>
+
+              <button
+                onClick={() => setScreen('home')}
+                className="rounded-full border border-[#18332f] px-6 py-3 text-sm font-bold text-[#18332f] transition hover:bg-[#e5eee5]"
+              >
+                ← Back to Home
+              </button>
+            </div>
+
+            {history.length === 0 ? (
+              <div className="rounded-3xl border border-[#d7e3d9] bg-white p-10 text-center shadow-sm">
+                <h2 className="text-xl font-bold text-[#18332f]">
+                  No interviews yet
+                </h2>
+                <p className="mt-3 text-[#52716a]">
+                  Your completed and ongoing interviews will appear here.
+                </p>
+                <button
+                  onClick={() => setScreen('setup')}
+                  className="mt-6 rounded-full bg-[#e06b45] px-7 py-3 font-bold text-white"
+                >
+                  Start Your First Interview →
+                </button>
+              </div>
+            ) : (
+              <div className="grid gap-5">
+                {history.map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-3xl border border-[#d7e3d9] bg-white p-6 shadow-sm"
+                  >
+                    <div className="flex flex-wrap items-start justify-between gap-4">
+                      <div>
+                        <h2 className="text-xl font-bold text-[#18332f]">
+                          {item.role}
+                        </h2>
+                        <p className="mt-2 text-sm text-[#52716a]">
+                          {item.experience} · {item.interview_type}
+                        </p>
+                      </div>
+
+                      <span className="rounded-full bg-[#e5eee5] px-4 py-2 text-sm font-semibold capitalize text-[#18332f]">
+                        {item.status}
+                      </span>
+                    </div>
+
+                    <div className="mt-6 flex flex-wrap gap-8 border-t border-[#e5eee5] pt-5">
+                      <div>
+                        <p className="text-xs uppercase tracking-wider text-[#789087]">
+                          Overall Score
+                        </p>
+                        <p className="mt-1 text-2xl font-bold text-[#18332f]">
+                          {item.overall_score ?? 'Not evaluated'}
+                          {item.overall_score !== null &&
+                            item.overall_score !== undefined
+                            ? '/10'
+                            : ''}
+                        </p>
+                      </div>
+
+                      <div>
+                        <p className="text-xs uppercase tracking-wider text-[#789087]">
+                          Date
+                        </p>
+                        <p className="mt-1 font-semibold text-[#18332f]">
+                          {item.created_at
+                            ? new Date(item.created_at).toLocaleDateString()
+                            : 'Date unavailable'}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </section>
         )}
 

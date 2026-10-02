@@ -18,6 +18,8 @@ class User(Base):
         index=True,
         nullable=False,
     )
+    
+
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -29,6 +31,10 @@ class Interview(Base):
     __tablename__ = "interviews"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("users.id"),
+        nullable=True,
+    )
     role: Mapped[str] = mapped_column(String, nullable=False)
     experience: Mapped[str] = mapped_column(String, nullable=False)
     interview_type: Mapped[str] = mapped_column(String, nullable=False)
@@ -43,7 +49,7 @@ class Interview(Base):
         server_default=func.now(),
         nullable=False,
     )
-
+    user: Mapped[User] = relationship()
     questions: Mapped[List[Question]] = relationship(
         back_populates="interview",
         cascade="all, delete-orphan",
