@@ -10,7 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database import get_db
-from models import Answer, Interview, Question
+from auth import get_current_user
+from models import Answer, Interview, Question, User
 from schemas import (
     AnswerCreate,
     GenerateQuestionsRequest,
@@ -35,8 +36,10 @@ router = APIRouter(prefix="/api/interviews", tags=["interviews"])
 def create_interview(
     interview_data: InterviewCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Interview:
     interview = Interview(
+        user_id=current_user.id,
         role=interview_data.role,
         experience=interview_data.experience,
         interview_type=interview_data.interview_type,
@@ -51,9 +54,12 @@ def create_interview(
 @router.get("/", response_model=list[InterviewResponse])
 def get_interview_history(
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> list[InterviewResponse]:
     interviews = db.scalars(
-        select(Interview).order_by(Interview.created_at.desc())
+        select(Interview)
+        .where(Interview.user_id == current_user.id)
+        .order_by(Interview.created_at.desc())
     ).all()
 
     return list(interviews)
@@ -62,8 +68,14 @@ def get_interview_history(
 def get_interview(
     interview_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> Interview:
-    interview = db.get(Interview, interview_id)
+    interview = db.scalar(
+        select(Interview).where(
+            Interview.id == interview_id,
+            Interview.user_id == current_user.id,
+        )
+    )
 
     if interview is None:
         raise HTTPException(
@@ -83,8 +95,14 @@ def generate_questions(
     interview_id: int,
     request: GenerateQuestionsRequest | None = None,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> GeneratedQuestions:
-    interview = db.get(Interview, interview_id)
+    interview = db.scalar(
+        select(Interview).where(
+            Interview.id == interview_id,
+            Interview.user_id == current_user.id,
+        )
+    )
 
     if interview is None:
         raise HTTPException(
@@ -142,8 +160,14 @@ def generate_questions(
 def get_interview_questions(
     interview_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    interview = db.get(Interview, interview_id)
+    interview = db.scalar(
+    select(Interview).where(
+        Interview.id == interview_id,
+        Interview.user_id == current_user.id,
+    )
+)
 
     if interview is None:
         raise HTTPException(
@@ -179,8 +203,16 @@ def submit_answer(
     question_id: int,
     answer_data: AnswerCreate,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    question = db.get(Question, question_id)
+    question = db.scalar(
+    select(Question)
+    .join(Interview, Question.interview_id == Interview.id)
+    .where(
+        Question.id == question_id,
+        Interview.user_id == current_user.id,
+    )
+)
 
     if question is None:
         raise HTTPException(
@@ -247,9 +279,14 @@ def submit_answer(
 def get_interview_results(
     interview_id: int,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    interview = db.get(Interview, interview_id)
-
+    interview = db.scalar(
+    select(Interview).where(
+        Interview.id == interview_id,
+        Interview.user_id == current_user.id,
+    )
+)
     if interview is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -353,6 +390,7 @@ def get_interview_results(
 @router.post("/documents/parse")
 async def parse_document(
     file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
 ):
     MAX_FILE_SIZE = 5 * 1024 * 1024
 
